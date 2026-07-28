@@ -1,0 +1,33 @@
+buildscript {
+    ext {
+        buildToolsVersion = "36.0.0"
+        minSdkVersion = 24
+        compileSdkVersion = 36
+        targetSdkVersion = 36
+        ndkVersion = "27.1.12297006"
+        kotlinVersion = "2.1.20"
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle")
+        classpath("com.facebook.react:react-native-gradle-plugin")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+    }
+}
+
+// me.bkey.ip:bmonisigner is resolved transitively on the *app's* runtime
+// classpath, so the repository has to be declared here — a repository inside the
+// library module would only cover that module's own resolution.
+allprojects {
+    repositories {
+        maven {
+            url "https://bkey-inc.github.io/package-distribution/maven"
+            content { includeGroup "me.bkey.ip" }
+        }
+    }
+}
+
+apply plugin: "com.facebook.react.rootproject"
