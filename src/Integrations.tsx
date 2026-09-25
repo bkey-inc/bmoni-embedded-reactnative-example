@@ -1,12 +1,13 @@
 /**
  * The regional / provider integrations that sit outside the core onboarding +
  * top-up + withdraw + swap flow: swap quote, EU SEPA, LATAM cash, LATAM Mexico,
- * USD VBA, bank payouts and payment wallet-selection.
+ * USD VBA and bank payouts.
  *
  * Each action calls the proxy and dumps the raw JSON response. Flows that return
  * a `signatureRequest` (or a `messageToSign`) expose "Sign & submit", which signs
  * the hash with `signTransactionHash` and completes via the matching endpoint —
  * `eu/orders/complete` for EU orders, `wallets/submit-signature` otherwise.
+ * Settlement is then polled via `GET wallets/workflows/{workflowId}`.
  */
 
 import React, {useRef, useState} from 'react';
@@ -39,11 +40,13 @@ export function IntegrationsScreen({
   client,
   userId,
   smartWalletId,
+  smartWalletAddress,
   onClose,
 }: {
   client: ProxyApiClient;
   userId: string;
   smartWalletId: string;
+  smartWalletAddress?: string;
   onClose: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -59,6 +62,9 @@ export function IntegrationsScreen({
   } | null>(null);
   const completeRef = useRef<Complete | null>(null);
   const [pinVisible, setPinVisible] = useState(false);
+
+  // Settlement check, pre-filled with the last submitted workflow.
+  const [settleWorkflowId, setSettleWorkflowId] = useState('');
 
   const [swapFrom, setSwapFrom] = useState('USDB');
   const [swapTo, setSwapTo] = useState('cNGN');
@@ -78,6 +84,9 @@ export function IntegrationsScreen({
   const [cashCurrency, setCashCurrency] = useState('MXN');
   const [cashDescription, setCashDescription] = useState('Example cash order');
   const [cashOrderId, setCashOrderId] = useState('');
+  const [fxUsdcAmount, setFxUsdcAmount] = useState('25');
+  const [fxCountry, setFxCountry] = useState('MX');
+  const [fxCurrency, setFxCurrency] = useState('MXN');
 
   const [mxAmount, setMxAmount] = useState('500');
   const [mxOrderId, setMxOrderId] = useState('');
@@ -117,6 +126,14 @@ export function IntegrationsScreen({
     completeRef.current = complete;
   };
 
+  /** `capturePending` for flows completed via `wallets/submit-signature`. */
+  const captureForSubmit = (json: Json, label: string) => {
+    const id = readWorkflowId(json) ?? '';
+    capturePending(json, label, signature =>
+      client.submitSignature({userId, workflowId: id, signature}),
+    );
+  };
+
   const signAndSubmit = (pin: string) => {
     const current = pending;
     const complete = completeRef.current;
@@ -130,6 +147,9 @@ export function IntegrationsScreen({
         pinArgument(pin),
       );
       const result = await complete(signature);
+      if (current.workflowId) {
+        setSettleWorkflowId(current.workflowId);
+      }
       setPending(null);
       completeRef.current = null;
       return result;
@@ -159,6 +179,27 @@ export function IntegrationsScreen({
               />
             </SectionCard>
           ) : null}
+
+          <SectionCard title="Workflow settlement">
+            <Note>
+              After Sign & submit, poll until isTerminal: COMPLETED carries
+              result, any other terminal status carries error.
+            </Note>
+            <Field label="Workflow id" value={settleWorkflowId} onChangeText={setSettleWorkflowId} />
+            <Button
+              label="GET workflow status"
+              kind="secondary"
+              disabled={busy}
+              onPress={() =>
+                run(() =>
+                  client.getWorkflowStatus({
+                    userId,
+                    workflowId: settleWorkflowId.trim(),
+                  }),
+                )
+              }
+            />
+          </SectionCard>
 
           <SectionCard title="Swap quote">
             <Note>GET exchange/rate/:from/:to · POST exchange/quote</Note>
@@ -208,7 +249,8 @@ export function IntegrationsScreen({
           <SectionCard title="USD virtual bank account">
             <Note>
               Readiness (GET /kyc/usd-readiness) → provision (POST
-              /onboarding/start-usa) → status (GET /vba/usd).
+              /onboarding/start-usa, or the smart-wallet route
+              …/onramp/vba/usd/provision) → status (GET /vba/usd).
             </Note>
             <Row>
               <Button
@@ -227,12 +269,26 @@ export function IntegrationsScreen({
                 }
               />
             </Row>
-            <Button
-              label="GET vba/usd"
-              kind="secondary"
-              disabled={busy}
-              onPress={() => run(() => client.getUsdVba(userId))}
-            />
+            <Row>
+              <Button
+                label="Provision (wallet route)"
+                kind="secondary"
+                style={styles.flex}
+                disabled={busy}
+                onPress={() =>
+                  run(() =>
+                    client.provisionSmartWalletUsdVba({userId, smartWalletId}),
+                  )
+                }
+              />
+              <Button
+                label="GET vba/usd"
+                kind="secondary"
+                style={styles.flex}
+                disabled={busy}
+                onPress={() => run(() => client.getUsdVba(userId))}
+              />
+            </Row>
           </SectionCard>
 
           <SectionCard title="EU SEPA / Monerium">
@@ -363,6 +419,38 @@ export function IntegrationsScreen({
                 run(() => client.getCashOrder({userId, orderId: cashOrderId.trim()}))
               }
             />
+            <Note>
+              Bank payout (USD → MXN / CLP / COP): swaps this wallet into USDC and
+              pays the equivalent fiat. No sender-side Mexico KYC; settles through
+              the workflow, with no order record.
+            </Note>
+            <Field label="USDC amount" value={fxUsdcAmount} onChangeText={setFxUsdcAmount} keyboardType="decimal-pad" />
+            <Field
+              label="Target country (alpha-2)"
+              value={fxCountry}
+              onChangeText={setFxCountry}
+              autoCapitalize="characters"
+              maxLength={2}
+            />
+            <Field label="Target currency" value={fxCurrency} onChangeText={setFxCurrency} autoCapitalize="characters" />
+            <Button
+              label="POST payouts/foreign"
+              disabled={busy}
+              onPress={() =>
+                run(async () => {
+                  const response = await client.createLatamForeignPayout({
+                    userId,
+                    smartWalletId,
+                    usdcAmount: fxUsdcAmount.trim(),
+                    targetCountry: fxCountry.trim().toUpperCase(),
+                    targetCurrency: fxCurrency.trim().toUpperCase(),
+                    description: cashDescription.trim(),
+                  });
+                  captureForSubmit(response, 'LATAM bank payout');
+                  return response;
+                })
+              }
+            />
           </SectionCard>
 
           <SectionCard title="LATAM Mexico — Etherfuse">
@@ -387,6 +475,38 @@ export function IntegrationsScreen({
                 onPress={() => run(() => client.getMxKycStatus(userId))}
               />
             </Row>
+            <Row>
+              <Button
+                label="Launch verification"
+                kind="secondary"
+                style={styles.flex}
+                disabled={busy}
+                onPress={() => run(() => client.getMxKycLaunch(userId))}
+              />
+              <Button
+                label="Start Mexico onboarding"
+                kind="secondary"
+                style={styles.flex}
+                disabled={busy}
+                onPress={() =>
+                  run(async () => {
+                    const address = smartWalletAddress?.trim();
+                    if (!address) {
+                      throw new Error('Smart wallet has no on-chain address.');
+                    }
+                    return client.startMexicoOnboarding({
+                      userId,
+                      mxnWalletAddress: address,
+                    });
+                  })
+                }
+              />
+            </Row>
+            <Note>
+              While status is proposed, the user must finish the hosted
+              verification: load the returned html into a WebView or browser (it
+              auto-submits; the token expires in ~5 min).
+            </Note>
             <Field label="Offramp source amount" value={mxAmount} onChangeText={setMxAmount} keyboardType="decimal-pad" />
             <Button
               label="POST offramp quote"
@@ -415,6 +535,31 @@ export function IntegrationsScreen({
                 run(() => client.getMxOrder({userId, orderId: mxOrderId.trim()}))
               }
             />
+            <Note>
+              Legacy MXNe → MEXe: if status reports eligible, prepare the 1:1 swap
+              (no fee) and sign it.
+            </Note>
+            <Row>
+              <Button
+                label="Migration status"
+                kind="secondary"
+                style={styles.flex}
+                disabled={busy}
+                onPress={() => run(() => client.getMxneMigrationStatus(userId))}
+              />
+              <Button
+                label="Prepare migration"
+                style={styles.flex}
+                disabled={busy}
+                onPress={() =>
+                  run(async () => {
+                    const response = await client.prepareMxneMigration(userId);
+                    captureForSubmit(response, 'MXNe → MEXe migration');
+                    return response;
+                  })
+                }
+              />
+            </Row>
           </SectionCard>
 
           <SectionCard title="Bank payouts — Fin">

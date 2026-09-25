@@ -36,6 +36,7 @@ import {
   ProxyApiError,
   readBankAccountId,
   readProposalId,
+  walletAddressOf,
   walletReady,
   WALLET_CURRENCIES,
   type CurrencyKey,
@@ -761,7 +762,7 @@ export function ExampleApp() {
         // and MXN sent to it onramps automatically — no quote or order.
         const accounts = await client.getDepositAccounts(userId, 'MXN');
         setMessage(
-          'Send MXN by SPEI to the CLABE below — it onramps to this wallet automatically.',
+          'Send MXN by SPEI to the CLABE below. It onramps to this wallet automatically.',
         );
         setLastResponse(prettyJson(accounts ?? {}));
         return;
@@ -1388,6 +1389,7 @@ export function ExampleApp() {
             client={client}
             userId={user.bmoniUserId}
             smartWalletId={smartWallet.id}
+            smartWalletAddress={walletAddressOf(smartWallet)}
             onClose={() => setShowIntegrations(false)}
           />
         ) : null}

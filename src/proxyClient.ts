@@ -808,6 +808,22 @@ export class ProxyApiClient {
     );
   }
 
+  /**
+   * Smart-wallet-scoped USD VBA provisioning (Graph Finance). Same account as
+   * `start-usa`, keyed on the wallet in the path; takes no body. Idempotent.
+   */
+  async provisionSmartWalletUsdVba(args: {
+    userId: string;
+    smartWalletId: string;
+  }): Promise<Json> {
+    return this.unwrap(
+      await this.request(
+        'POST',
+        `/v1/users/${args.userId}/smart-wallets/${args.smartWalletId}/onramp/vba/usd/provision`,
+      ),
+    );
+  }
+
   async getUsdVba(userId: string): Promise<Json> {
     return this.unwrap(await this.request('GET', `/v1/users/${userId}/vba/usd`));
   }
@@ -1125,6 +1141,33 @@ export class ProxyApiClient {
     );
   }
 
+  /**
+   * Bank payout into a LATAM country (the USD → MXN / CLP / COP corridor),
+   * funded from any stablecoin wallet. Returns a quote plus a
+   * `signatureRequest`; after submitting it, poll `getWorkflowStatus`, since
+   * there is no order record for this payout.
+   */
+  createLatamForeignPayout(args: {
+    userId: string;
+    smartWalletId: string;
+    usdcAmount: string;
+    targetCountry: string;
+    targetCurrency: string;
+    description: string;
+  }): Promise<Json> {
+    return this.request(
+      'POST',
+      `/v1/users/${args.userId}/latam/cash/payouts/foreign`,
+      {
+        smartWalletId: args.smartWalletId,
+        usdcAmount: args.usdcAmount,
+        targetCountry: args.targetCountry,
+        targetCurrency: args.targetCurrency,
+        description: args.description,
+      },
+    );
+  }
+
   getCashOrder(args: {userId: string; orderId: string}): Promise<Json> {
     return this.request(
       'GET',
@@ -1165,6 +1208,52 @@ export class ProxyApiClient {
       body.note = args.note;
     }
     return this.request('POST', `/v1/users/${args.userId}/latam/mx/quote`, body);
+  }
+
+  /**
+   * Hosted verification launch (`url`, `fields`, auto-submitting `html`),
+   * required for Mexico KYC approval. Call after activation and whenever
+   * status is `proposed`; the JWT inside expires in ~5 minutes.
+   */
+  getMxKycLaunch(userId: string): Promise<Json> {
+    return this.request(
+      'GET',
+      `/v1/users/${userId}/latam/mx/kyc/launch/agreements`,
+    );
+  }
+
+  startMexicoOnboarding(args: {
+    userId: string;
+    mxnWalletAddress: string;
+    mxnWalletIndex?: number;
+  }): Promise<Json> {
+    return this.request(
+      'POST',
+      `/v1/users/${args.userId}/onboarding/start-mexico`,
+      {
+        mxnWalletAddress: args.mxnWalletAddress,
+        mxnWalletIndex: args.mxnWalletIndex ?? 0,
+      },
+    );
+  }
+
+  /** Whether the MXN wallet still holds the retired MXNe token (`eligible`). */
+  getMxneMigrationStatus(userId: string): Promise<Json> {
+    return this.request(
+      'GET',
+      `/v1/users/${userId}/latam/mx/mxne-migration/status`,
+    );
+  }
+
+  /**
+   * Builds the 1:1 MXNe → MEXe swap and returns its `signatureRequest`.
+   * Errors 400 when there is no MXNe to migrate.
+   */
+  prepareMxneMigration(userId: string): Promise<Json> {
+    return this.request(
+      'POST',
+      `/v1/users/${userId}/latam/mx/mxne-migration/prepare`,
+    );
   }
 
   getMxOrder(args: {userId: string; orderId: string}): Promise<Json> {
@@ -1271,6 +1360,18 @@ export class ProxyApiClient {
       'POST',
       `/v1/users/${args.userId}/wallets/submit-signature`,
       {workflowId: args.workflowId, signature: args.signature},
+    );
+  }
+
+  /**
+   * Settlement of a submitted signature (`status`, `isTerminal`, `result` /
+   * `error`). The only way to see the MXN offramp, MXNe migration and LATAM
+   * payouts settle; poll every ~5s until `isTerminal`.
+   */
+  getWorkflowStatus(args: {userId: string; workflowId: string}): Promise<Json> {
+    return this.request(
+      'GET',
+      `/v1/users/${args.userId}/wallets/workflows/${args.workflowId}`,
     );
   }
 
