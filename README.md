@@ -168,6 +168,12 @@ instead of creating a new user.
   `fromAmount` (`"100.00"`).
 - **Photos** — `NSPhotoLibraryUsageDescription` is declared for iOS. Android 13+
   uses the system photo picker, so no runtime permission is needed.
+- **Mexico hosted verification** — when `latam/mx/kyc/status` is `proposed`, the
+  app fetches `kyc/launch/agreements` and loads its `html` in a WebView
+  (`react-native-webview`, so run `pod install` after pulling). The selfie /
+  liveness step needs the camera: `NSCameraUsageDescription` /
+  `NSMicrophoneUsageDescription` on iOS (WebKit then asks per site), and
+  `CAMERA` / `RECORD_AUDIO` on Android, which the WebView requests at runtime.
 - **`npm install` and `min-release-age`** — npm's supply-chain gate rejects
   recently published packages. If the install fails with
   `No versions available for @bkey-inc/bmoni_embedded_sdk`, run

@@ -1215,10 +1215,12 @@ export class ProxyApiClient {
    * required for Mexico KYC approval. Call after activation and whenever
    * status is `proposed`; the JWT inside expires in ~5 minutes.
    */
-  getMxKycLaunch(userId: string): Promise<Json> {
-    return this.request(
-      'GET',
-      `/v1/users/${userId}/latam/mx/kyc/launch/agreements`,
+  async getMxKycLaunch(userId: string): Promise<Json> {
+    return this.unwrap(
+      await this.request(
+        'GET',
+        `/v1/users/${userId}/latam/mx/kyc/launch/agreements`,
+      ),
     );
   }
 

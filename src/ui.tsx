@@ -349,6 +349,7 @@ export const styles = StyleSheet.create({
   flex: {flex: 1},
   screen: {flex: 1, backgroundColor: theme.background},
   scroll: {padding: 16, paddingBottom: 48},
+  webviewHeader: {paddingHorizontal: 16, paddingBottom: 8},
   header: {marginBottom: 16},
   headerTitle: {
     color: theme.text,

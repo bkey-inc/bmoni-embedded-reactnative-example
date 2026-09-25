@@ -20,6 +20,7 @@ import {
   type Json,
   type ProxyApiClient,
 } from './proxyClient';
+import {useHostedVerification} from './HostedVerification';
 import {BmoniEmbeddedSdk, describeSdkError, pinArgument} from './sdk';
 import {
   BusyOverlay,
@@ -61,6 +62,7 @@ export function IntegrationsScreen({
     hash: string;
   } | null>(null);
   const completeRef = useRef<Complete | null>(null);
+  const hostedVerification = useHostedVerification(client);
   const [pinVisible, setPinVisible] = useState(false);
 
   // Settlement check, pre-filled with the last submitted workflow.
@@ -481,7 +483,7 @@ export function IntegrationsScreen({
                 kind="secondary"
                 style={styles.flex}
                 disabled={busy}
-                onPress={() => run(() => client.getMxKycLaunch(userId))}
+                onPress={() => run(() => hostedVerification.launch(userId))}
               />
               <Button
                 label="Start Mexico onboarding"
@@ -504,8 +506,8 @@ export function IntegrationsScreen({
             </Row>
             <Note>
               While status is proposed, the user must finish the hosted
-              verification: load the returned html into a WebView or browser (it
-              auto-submits; the token expires in ~5 min).
+              verification. Launch opens it in a WebView and shows the status once
+              it is closed.
             </Note>
             <Field label="Offramp source amount" value={mxAmount} onChangeText={setMxAmount} keyboardType="decimal-pad" />
             <Button
@@ -667,6 +669,7 @@ export function IntegrationsScreen({
         </ScrollView>
 
         <BusyOverlay visible={busy} />
+        {hostedVerification.modal}
         <PinPrompt
           visible={pinVisible}
           pinLength={BmoniEmbeddedSdk.pinLength}

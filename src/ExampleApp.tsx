@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 
+import {useHostedVerification} from './HostedVerification';
 import {IntegrationsScreen} from './Integrations';
 import {KycWizard} from './KycWizard';
 import {NigeriaWithdrawalModal} from './NigeriaWithdrawal';
@@ -149,6 +150,8 @@ export function ExampleApp() {
     () => new ProxyApiClient(baseUrl.trim(), apiKey.trim()),
     [baseUrl, apiKey],
   );
+  const {launch: launchHostedVerification, modal: hostedVerificationModal} =
+    useHostedVerification(client);
   const busyRef = useRef(false);
 
   const ownedCodes = useMemo(
@@ -607,19 +610,31 @@ export function ExampleApp() {
         setStep('kycWizard');
         return false;
       }
+      // Documented statuses: not_started | in_progress | proposed | approved |
+      // rejected. `proposed` waits on the user finishing the hosted flow.
       const status = String(mx.status ?? '').toLowerCase();
       setLastResponse(prettyJson(mx));
-      if (status === 'approved') {
-        return true;
+      switch (status) {
+        case 'approved':
+          return true;
+        case 'in_progress':
+          setMessage(
+            'Etherfuse review in flight. Poll GET /latam/mx/kyc/status until approved.',
+          );
+          return false;
+        case 'proposed': {
+          const after = await launchHostedVerification(userId);
+          setMessage(
+            `Mexico verification status: ${String(after.status ?? 'unknown')}. ` +
+              'Top up and withdraw unlock once it is approved.',
+          );
+          setLastResponse(prettyJson(after));
+          return false;
+        }
+        default:
+          setStep('kycWizard');
+          return false;
       }
-      if (status === 'pending' || status === 'processing') {
-        setMessage(
-          'Etherfuse review in flight. Poll GET /latam/mx/kyc/status until approved.',
-        );
-        return false;
-      }
-      setStep('kycWizard');
-      return false;
     }
 
     const status = await client.getOnboardingStatus(userId);
@@ -637,7 +652,7 @@ export function ExampleApp() {
     }
     setStep('kycWizard');
     return false;
-  }, [client, currency, requireUserId]);
+  }, [client, currency, launchHostedVerification, requireUserId]);
 
   // --- top up --------------------------------------------------------------
 
@@ -1298,6 +1313,7 @@ export function ExampleApp() {
         )}
 
         <BusyOverlay visible={busy} />
+        {hostedVerificationModal}
 
         <PinPrompt
           visible={pinPrompt !== null}
