@@ -17,6 +17,7 @@ import {
   ProxyApiError,
   readProposalId,
   smartWalletFromPayload,
+  sumsubLevelFor,
   usesGlobalKyc,
   WALLET_CURRENCIES,
   type SmartWallet,
@@ -33,10 +34,10 @@ const wallet: SmartWallet = {
 
 describe('parseSupportedCurrencies', () => {
   it('reads a plain array', () => {
-    expect(parseSupportedCurrencies(['USDB', 'CNGN', 'MXNe'])).toEqual([
+    expect(parseSupportedCurrencies(['USDB', 'CNGN', 'MEXe'])).toEqual([
       'USDB',
       'CNGN',
-      'MXNe',
+      'MEXe',
     ]);
   });
 
@@ -257,8 +258,18 @@ describe('currencies', () => {
     ]);
   });
 
+  it('sends sumsubLevelName for every rail except CAD', () => {
+    expect(WALLET_CURRENCIES.map(c => [c.key, sumsubLevelFor(c)])).toEqual([
+      ['usd', 'id-and-liveness'],
+      ['cad', undefined],
+      ['eur', 'id-and-liveness'],
+      ['ngn', 'id-only'],
+      ['mxn', 'id-and-liveness'],
+    ]);
+  });
+
   it('resolves a wallet currency from its stablecoin code', () => {
-    expect(currencyFromSmartWalletCurrency('mxne').key).toBe('mxn');
+    expect(currencyFromSmartWalletCurrency('mexe').key).toBe('mxn');
     expect(currencyFromSmartWalletCurrency('CNGN').key).toBe('ngn');
     // Unknown codes fall back to the first option rather than throwing.
     expect(currencyFromSmartWalletCurrency('GBPe').key).toBe('usd');

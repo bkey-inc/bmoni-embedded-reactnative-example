@@ -79,9 +79,7 @@ export function IntegrationsScreen({
   const [cashDescription, setCashDescription] = useState('Example cash order');
   const [cashOrderId, setCashOrderId] = useState('');
 
-  const [mxType, setMxType] = useState('onramp');
   const [mxAmount, setMxAmount] = useState('500');
-  const [mxQuoteId, setMxQuoteId] = useState('');
   const [mxOrderId, setMxOrderId] = useState('');
 
   const [poCountry, setPoCountry] = useState('NGA');
@@ -90,8 +88,6 @@ export function IntegrationsScreen({
   const [poAccountNumber, setPoAccountNumber] = useState('');
   const [poAccountHolder, setPoAccountHolder] = useState('');
   const [poAmount, setPoAmount] = useState('100000000');
-
-  const [payWorkflowId, setPayWorkflowId] = useState('');
 
   const run = async (task: () => Promise<unknown>) => {
     if (busy) {
@@ -371,8 +367,9 @@ export function IntegrationsScreen({
 
           <SectionCard title="LATAM Mexico — Etherfuse">
             <Note>
-              activate → poll status → register a CLABE, then quote → order. MXN
-              onramp orders return the depositClabe to transfer to.
+              activate → poll status. Onramp is deposit-driven: MXN sent by SPEI
+              to the CLABE (GET …/deposit-accounts/MXN) credits the wallet with no
+              quote. Offramp: quote → sign → submit-signature.
             </Note>
             <Row>
               <Button
@@ -390,45 +387,21 @@ export function IntegrationsScreen({
                 onPress={() => run(() => client.getMxKycStatus(userId))}
               />
             </Row>
-            <Field label="Type (onramp/offramp)" value={mxType} onChangeText={setMxType} />
-            <Field label="Source amount" value={mxAmount} onChangeText={setMxAmount} keyboardType="decimal-pad" />
+            <Field label="Offramp source amount" value={mxAmount} onChangeText={setMxAmount} keyboardType="decimal-pad" />
             <Button
-              label="POST quote"
+              label="POST offramp quote"
               disabled={busy}
               onPress={() =>
                 run(async () => {
-                  const response = await client.createMxQuote({
+                  const response = await client.createMxOfframpQuote({
                     userId,
-                    type: mxType.trim(),
                     sourceAmount: mxAmount.trim(),
                   });
-                  const quoteId = response.quoteId;
-                  if (typeof quoteId === 'string') {
-                    setMxQuoteId(quoteId);
-                  }
-                  // Offramp quotes carry a signatureRequest funding the swap.
+                  // The quote carries a signatureRequest funding the swap.
                   const workflowId = readWorkflowId(response) ?? '';
                   capturePending(response, 'MX offramp funding', signature =>
                     client.submitSignature({userId, workflowId, signature}),
                   );
-                  return response;
-                })
-              }
-            />
-            <Field label="Quote id" value={mxQuoteId} onChangeText={setMxQuoteId} />
-            <Button
-              label="POST order"
-              disabled={busy}
-              onPress={() =>
-                run(async () => {
-                  const response = await client.createMxOrder({
-                    userId,
-                    quoteId: mxQuoteId.trim(),
-                  });
-                  const orderId = response.orderId;
-                  if (typeof orderId === 'string') {
-                    setMxOrderId(orderId);
-                  }
                   return response;
                 })
               }
@@ -539,33 +512,6 @@ export function IntegrationsScreen({
                 }
               />
             </Row>
-          </SectionCard>
-
-          <SectionCard title="Payment wallet-selection">
-            <Note>
-              Selects this wallet to fund a pending payment workflow, then returns
-              a signatureRequest to authorize it.
-            </Note>
-            <Field label="Payment workflow id" value={payWorkflowId} onChangeText={setPayWorkflowId} />
-            <Button
-              label="POST select-wallet"
-              disabled={busy}
-              onPress={() =>
-                run(async () => {
-                  const response = await client.selectPaymentWallet({
-                    userId,
-                    workflowId: payWorkflowId.trim(),
-                    smartWalletId,
-                  });
-                  const workflowId =
-                    readWorkflowId(response) ?? payWorkflowId.trim();
-                  capturePending(response, 'Payment authorization', signature =>
-                    client.submitSignature({userId, workflowId, signature}),
-                  );
-                  return response;
-                })
-              }
-            />
           </SectionCard>
 
           {output ? <LastResponsePanel value={output} /> : null}
