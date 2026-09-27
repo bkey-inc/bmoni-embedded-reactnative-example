@@ -17,6 +17,7 @@ import {
   KYC_IDENTIFICATION_TYPES,
   KYC_PROOF_OF_ADDRESS_TYPES,
   mimeTypeForFilename,
+  sumsubLevelFor,
   usesGlobalKyc,
   type Json,
   type ProxyApiClient,
@@ -426,7 +427,7 @@ export function KycWizard({
       const readiness = await client.getKycReadiness(userId);
       const activateKyc = await client.activateKyc(
         userId,
-        globalKyc ? 'id-and-liveness' : undefined,
+        sumsubLevelFor(currency),
       );
       const startOnboarding = await client.startOnboarding({
         userId,
@@ -713,7 +714,7 @@ export function KycWizard({
             <Note>
               Submit runs: PATCH /kyc → upload ID &amp; PoA
               {globalKyc ? ' & biometric' : ''} → GET /kyc/readiness → POST
-              /kyc/activate{globalKyc ? ' (sumsubLevelName: id-and-liveness)' : ' (no body)'} →{' '}
+              /kyc/activate{sumsubLevelFor(currency) ? ` (sumsubLevelName: ${sumsubLevelFor(currency)})` : ' (no body)'} →{' '}
               {currency.kycProviderLabel}{' '}
               {currency.key === 'mxn' ? 'activation' : 'start-* onboarding'}.
             </Note>

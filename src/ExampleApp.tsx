@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 
+import {useHostedVerification} from './HostedVerification';
 import {IntegrationsScreen} from './Integrations';
 import {KycWizard} from './KycWizard';
 import {NigeriaWithdrawalModal} from './NigeriaWithdrawal';
@@ -34,7 +35,9 @@ import {
   prettyJson,
   ProxyApiClient,
   ProxyApiError,
+  readBankAccountId,
   readProposalId,
+  walletAddressOf,
   walletReady,
   WALLET_CURRENCIES,
   type CurrencyKey,
@@ -147,6 +150,8 @@ export function ExampleApp() {
     () => new ProxyApiClient(baseUrl.trim(), apiKey.trim()),
     [baseUrl, apiKey],
   );
+  const {launch: launchHostedVerification, modal: hostedVerificationModal} =
+    useHostedVerification(client);
   const busyRef = useRef(false);
 
   const ownedCodes = useMemo(
@@ -605,19 +610,31 @@ export function ExampleApp() {
         setStep('kycWizard');
         return false;
       }
+      // Documented statuses: not_started | in_progress | proposed | approved |
+      // rejected. `proposed` waits on the user finishing the hosted flow.
       const status = String(mx.status ?? '').toLowerCase();
       setLastResponse(prettyJson(mx));
-      if (status === 'approved') {
-        return true;
+      switch (status) {
+        case 'approved':
+          return true;
+        case 'in_progress':
+          setMessage(
+            'Etherfuse review in flight. Poll GET /latam/mx/kyc/status until approved.',
+          );
+          return false;
+        case 'proposed': {
+          const after = await launchHostedVerification(userId);
+          setMessage(
+            `Mexico verification status: ${String(after.status ?? 'unknown')}. ` +
+              'Top up and withdraw unlock once it is approved.',
+          );
+          setLastResponse(prettyJson(after));
+          return false;
+        }
+        default:
+          setStep('kycWizard');
+          return false;
       }
-      if (status === 'pending' || status === 'processing') {
-        setMessage(
-          'Etherfuse review in flight. Poll GET /latam/mx/kyc/status until approved.',
-        );
-        return false;
-      }
-      setStep('kycWizard');
-      return false;
     }
 
     const status = await client.getOnboardingStatus(userId);
@@ -635,7 +652,7 @@ export function ExampleApp() {
     }
     setStep('kycWizard');
     return false;
-  }, [client, currency, requireUserId]);
+  }, [client, currency, launchHostedVerification, requireUserId]);
 
   // --- top up --------------------------------------------------------------
 
@@ -712,39 +729,59 @@ export function ExampleApp() {
       }
       case 'ngn': {
         const raw = await client.getBankAccounts(userId);
-        const existing = extractNigerianDeposits(raw);
-        const account =
-          existing.length > 0
-            ? existing[0]
-            : await client.createNgnVba({userId, smartWalletId});
+        const bankAccountId = readBankAccountId(extractNigerianDeposits(raw)[0] ?? {});
+        if (!bankAccountId) {
+          throw new ExampleError(
+            'No NGN deposit account yet. It is created by Nigeria onboarding ' +
+              '(POST /onboarding/start-nigeria).',
+          );
+        }
+        const link = await client.linkDepositVba({
+          userId,
+          smartWalletId,
+          region: 'nigeria',
+          bankAccountId,
+        });
         const details = await client
-          .getNgnDepositAccounts(userId)
+          .getDepositAccounts(userId, 'NGN')
           .catch(() => null);
         setMessage(
-          'Nigerian deposit account ready. Incoming NGN is swept to this wallet as cNGN.',
+          'NGN deposit account routed to this wallet. Incoming NGN is swept to it as cNGN.',
         );
-        setLastResponse(prettyJson({account, depositAccounts: details}));
+        setLastResponse(prettyJson({link, depositAccounts: details}));
         return;
       }
       case 'eur': {
         const raw = await client.getBankAccounts(userId);
-        const existing = extractEuropeanDeposits(raw);
-        const account =
-          existing.length > 0
-            ? existing[0]
-            : await client.createEurVba({userId, smartWalletId});
+        const bankAccountId = readBankAccountId(extractEuropeanDeposits(raw)[0] ?? {});
+        if (!bankAccountId) {
+          throw new ExampleError(
+            'No EUR deposit account yet. It is created by EU onboarding ' +
+              '(POST /onboarding/start-monerium).',
+          );
+        }
+        const link = await client.linkDepositVba({
+          userId,
+          smartWalletId,
+          region: 'eu',
+          bankAccountId,
+        });
         setMessage(
-          'EU deposit account ready. Use GET /bank-accounts for IBAN routing. ' +
-            'Outbound SEPA payouts live under Integrations.',
+          'EUR IBAN reserved for this wallet. Outbound SEPA payouts live under Integrations.',
         );
-        setLastResponse(prettyJson(account));
+        setLastResponse(prettyJson(link));
         return;
       }
-      case 'mxn':
-        throw new ExampleError(
-          'MXN top-up runs POST /latam/mx/quote → POST /latam/mx/orders and ' +
-            'shows the returned depositClabe. Use “LATAM Mexico” under Integrations.',
+      case 'mxn': {
+        // Deposit-driven: the SPEI CLABE exists once Mexico KYC is approved,
+        // and MXN sent to it onramps automatically — no quote or order.
+        const accounts = await client.getDepositAccounts(userId, 'MXN');
+        setMessage(
+          'Send MXN by SPEI to the CLABE below. It onramps to this wallet automatically.',
         );
+        setLastResponse(prettyJson(accounts ?? {}));
+        return;
+      }
       case 'cad':
         throw new ExampleError(
           'Bank transfer top-up for CAD is not wired in this example. Use crypto top-up.',
@@ -871,9 +908,13 @@ export function ExampleApp() {
       if (!(await ensureRailActive())) {
         return;
       }
+      const parsedAmount = Number(amount.trim());
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+        throw new ExampleError('Enter an amount greater than zero.');
+      }
       const response = await client.convertCurrency({
         userId,
-        amount: amount.trim(),
+        amount: parsedAmount,
         from: currency.fiatCode,
         to: toCurrency.trim().toUpperCase(),
       });
@@ -1272,6 +1313,7 @@ export function ExampleApp() {
         )}
 
         <BusyOverlay visible={busy} />
+        {hostedVerificationModal}
 
         <PinPrompt
           visible={pinPrompt !== null}
@@ -1363,6 +1405,7 @@ export function ExampleApp() {
             client={client}
             userId={user.bmoniUserId}
             smartWalletId={smartWallet.id}
+            smartWalletAddress={walletAddressOf(smartWallet)}
             onClose={() => setShowIntegrations(false)}
           />
         ) : null}

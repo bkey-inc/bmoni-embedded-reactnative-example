@@ -37,8 +37,29 @@
 	<string></string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Pick an ID document, proof of address, or selfie to upload for KYC.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera is used for the selfie and liveness check during identity verification.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>The microphone may be used during the liveness check in identity verification.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

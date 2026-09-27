@@ -64,17 +64,35 @@ export const WALLET_CURRENCIES: readonly WalletCurrencyOption[] = [
     key: 'mxn',
     label: 'Mexican Peso',
     fiatCode: 'MXN',
-    smartWalletCurrency: 'MXNe',
+    smartWalletCurrency: 'MEXe',
     kycProviderLabel: 'Etherfuse KYC',
   },
 ];
 
 /**
- * The Global-KYC path (USD / EUR / MXN) requires a biometric selfie upload and a
- * `sumsubLevelName` at activation. CAD and NGN must omit both.
+ * The Global-KYC path (USD / EUR / MXN) requires a biometric selfie upload and
+ * liveness at activation.
  */
 export function usesGlobalKyc(option: WalletCurrencyOption): boolean {
   return option.key === 'usd' || option.key === 'eur' || option.key === 'mxn';
+}
+
+/**
+ * `sumsubLevelName` for `POST …/kyc/activate`. Required for every country
+ * except Canada, which routes to PayTrie and ignores it. NGN uploads no
+ * selfie, so it uses the ID-only level.
+ */
+export function sumsubLevelFor(
+  option: WalletCurrencyOption,
+): string | undefined {
+  switch (option.key) {
+    case 'cad':
+      return undefined;
+    case 'ngn':
+      return 'id-only';
+    default:
+      return 'id-and-liveness';
+  }
 }
 
 export function currencyByKey(key: CurrencyKey): WalletCurrencyOption {
@@ -685,7 +703,7 @@ export class ProxyApiClient {
     return this.request('GET', `/v1/users/${userId}/kyc/readiness`);
   }
 
-  /** `sumsubLevelName` is sent for USD / EUR / MXN and omitted for CAD / NGN. */
+  /** `sumsubLevelName` is omitted only for CAD (see `sumsubLevelFor()`). */
   activateKyc(userId: string, sumsubLevelName?: string): Promise<Json> {
     const body: Json = {};
     if (sumsubLevelName && sumsubLevelName.trim() !== '') {
@@ -735,13 +753,14 @@ export class ProxyApiClient {
 
   /**
    * Biometric selfie upload. Required on the Global KYC path (USD / EUR / MXN)
-   * and unused for CAD / NGN.
+   * and unused for CAD / NGN. The file field is `selfie`, not `files`.
    */
   uploadKycBiometric(args: {userId: string; file: UploadFile}): Promise<Json> {
     return this.sendMultipart(
       `/v1/users/${args.userId}/kyc/documents/biometric`,
       [args.file],
-      {},
+      {type: 'selfie'},
+      'selfie',
     );
   }
 
@@ -789,6 +808,22 @@ export class ProxyApiClient {
     );
   }
 
+  /**
+   * Smart-wallet-scoped USD VBA provisioning (Graph Finance). Same account as
+   * `start-usa`, keyed on the wallet in the path; takes no body. Idempotent.
+   */
+  async provisionSmartWalletUsdVba(args: {
+    userId: string;
+    smartWalletId: string;
+  }): Promise<Json> {
+    return this.unwrap(
+      await this.request(
+        'POST',
+        `/v1/users/${args.userId}/smart-wallets/${args.smartWalletId}/onramp/vba/usd/provision`,
+      ),
+    );
+  }
+
   async getUsdVba(userId: string): Promise<Json> {
     return this.unwrap(await this.request('GET', `/v1/users/${userId}/vba/usd`));
   }
@@ -820,39 +855,33 @@ export class ProxyApiClient {
   }
 
   /**
-   * EUR virtual bank account (SEPA / Monerium). `ownershipModel` is `dedicated`
-   * (unique IBAN) or `shared` (pooled + deposit reference, the default).
+   * Routes an existing deposit VBA to a smart wallet
+   * (`POST …/smart-wallets/{id}/onramp/vba/{region}`): `nigeria` (NGN → cNGN)
+   * or `eu` (IBAN → EURe). The account itself comes from the rail's
+   * onboarding (`start-nigeria` / `start-monerium`).
    */
-  async createEurVba(args: {
+  async linkDepositVba(args: {
     userId: string;
     smartWalletId: string;
-    ownershipModel?: string;
+    region: 'nigeria' | 'eu';
+    bankAccountId: string;
   }): Promise<Json> {
     return this.unwrap(
-      await this.request('POST', `/v1/users/${args.userId}/vba/eu`, {
-        smartWalletId: args.smartWalletId,
-        ownershipModel: args.ownershipModel ?? 'shared',
-      }),
+      await this.request(
+        'POST',
+        `/v1/users/${args.userId}/smart-wallets/${args.smartWalletId}/onramp/vba/${args.region}`,
+        {bankAccountId: args.bankAccountId},
+      ),
     );
   }
 
-  /** NGN virtual bank account. Incoming NGN is swept to the wallet as cNGN. */
-  async createNgnVba(args: {
-    userId: string;
-    smartWalletId: string;
-  }): Promise<Json> {
-    return this.unwrap(
-      await this.request('POST', `/v1/users/${args.userId}/vba/ngn`, {
-        smartWalletId: args.smartWalletId,
-      }),
-    );
-  }
-
-  /** The NGN virtual account details — the number the user transfers to. */
-  getNgnDepositAccounts(userId: string): Promise<unknown> {
+  /**
+   * The account details the user transfers to (NGN NUBAN, MXN SPEI CLABE, …).
+   */
+  getDepositAccounts(userId: string, currency: string): Promise<unknown> {
     return this.requestRaw(
       'GET',
-      `/v1/users/${userId}/bank-accounts/deposit-accounts/NGN`,
+      `/v1/users/${userId}/bank-accounts/deposit-accounts/${currency}`,
     );
   }
 
@@ -961,7 +990,7 @@ export class ProxyApiClient {
 
   convertCurrency(args: {
     userId: string;
-    amount: string;
+    amount: number;
     from: string;
     to: string;
   }): Promise<Json> {
@@ -1112,6 +1141,33 @@ export class ProxyApiClient {
     );
   }
 
+  /**
+   * Bank payout into a LATAM country (the USD → MXN / CLP / COP corridor),
+   * funded from any stablecoin wallet. Returns a quote plus a
+   * `signatureRequest`; after submitting it, poll `getWorkflowStatus`, since
+   * there is no order record for this payout.
+   */
+  createLatamForeignPayout(args: {
+    userId: string;
+    smartWalletId: string;
+    usdcAmount: string;
+    targetCountry: string;
+    targetCurrency: string;
+    description: string;
+  }): Promise<Json> {
+    return this.request(
+      'POST',
+      `/v1/users/${args.userId}/latam/cash/payouts/foreign`,
+      {
+        smartWalletId: args.smartWalletId,
+        usdcAmount: args.usdcAmount,
+        targetCountry: args.targetCountry,
+        targetCurrency: args.targetCurrency,
+        description: args.description,
+      },
+    );
+  }
+
   getCashOrder(args: {userId: string; orderId: string}): Promise<Json> {
     return this.request(
       'GET',
@@ -1137,36 +1193,69 @@ export class ProxyApiClient {
     );
   }
 
-  /** `account` is the personal- or business-shaped CLABE registration object. */
-  registerMxBankAccount(args: {userId: string; account: Json}): Promise<Json> {
-    return this.request(
-      'POST',
-      `/v1/users/${args.userId}/latam/mx/kyc/bank-account`,
-      {account: args.account},
-    );
-  }
-
   /**
-   * MXN on/offramp quote. Offramp quotes carry a `signatureRequest` to sign and
-   * submit via `submitSignature`.
+   * MXN offramp quote. Returns a `signatureRequest` to sign and submit via
+   * `submitSignature`. Onramps need no quote: depositing MXN to the user's
+   * CLABE (`getDepositAccounts(userId, 'MXN')`) onramps automatically.
    */
-  createMxQuote(args: {
+  createMxOfframpQuote(args: {
     userId: string;
-    type: string;
     sourceAmount: string;
     note?: string;
   }): Promise<Json> {
-    const body: Json = {type: args.type, sourceAmount: args.sourceAmount};
+    const body: Json = {type: 'offramp', sourceAmount: args.sourceAmount};
     if (args.note && args.note !== '') {
       body.note = args.note;
     }
     return this.request('POST', `/v1/users/${args.userId}/latam/mx/quote`, body);
   }
 
-  createMxOrder(args: {userId: string; quoteId: string}): Promise<Json> {
-    return this.request('POST', `/v1/users/${args.userId}/latam/mx/orders`, {
-      quoteId: args.quoteId,
-    });
+  /**
+   * Hosted verification launch (`url`, `fields`, auto-submitting `html`),
+   * required for Mexico KYC approval. Call after activation and whenever
+   * status is `proposed`; the JWT inside expires in ~5 minutes.
+   */
+  async getMxKycLaunch(userId: string): Promise<Json> {
+    return this.unwrap(
+      await this.request(
+        'GET',
+        `/v1/users/${userId}/latam/mx/kyc/launch/agreements`,
+      ),
+    );
+  }
+
+  startMexicoOnboarding(args: {
+    userId: string;
+    mxnWalletAddress: string;
+    mxnWalletIndex?: number;
+  }): Promise<Json> {
+    return this.request(
+      'POST',
+      `/v1/users/${args.userId}/onboarding/start-mexico`,
+      {
+        mxnWalletAddress: args.mxnWalletAddress,
+        mxnWalletIndex: args.mxnWalletIndex ?? 0,
+      },
+    );
+  }
+
+  /** Whether the MXN wallet still holds the retired MXNe token (`eligible`). */
+  getMxneMigrationStatus(userId: string): Promise<Json> {
+    return this.request(
+      'GET',
+      `/v1/users/${userId}/latam/mx/mxne-migration/status`,
+    );
+  }
+
+  /**
+   * Builds the 1:1 MXNe → MEXe swap and returns its `signatureRequest`.
+   * Errors 400 when there is no MXNe to migrate.
+   */
+  prepareMxneMigration(userId: string): Promise<Json> {
+    return this.request(
+      'POST',
+      `/v1/users/${userId}/latam/mx/mxne-migration/prepare`,
+    );
   }
 
   getMxOrder(args: {userId: string; orderId: string}): Promise<Json> {
@@ -1261,19 +1350,7 @@ export class ProxyApiClient {
     return this.request('POST', `/v1/users/${args.userId}/payouts`, body);
   }
 
-  // --- Payment / shared signature submission ------------------------------
-
-  selectPaymentWallet(args: {
-    userId: string;
-    workflowId: string;
-    smartWalletId: string;
-  }): Promise<Json> {
-    return this.request(
-      'POST',
-      `/v1/users/${args.userId}/payment/select-wallet`,
-      {workflowId: args.workflowId, smartWalletId: args.smartWalletId},
-    );
-  }
+  // --- Shared signature submission ----------------------------------------
 
   /** Completes any `signatureRequest` workflow by submitting the signature. */
   submitSignature(args: {
@@ -1285,6 +1362,18 @@ export class ProxyApiClient {
       'POST',
       `/v1/users/${args.userId}/wallets/submit-signature`,
       {workflowId: args.workflowId, signature: args.signature},
+    );
+  }
+
+  /**
+   * Settlement of a submitted signature (`status`, `isTerminal`, `result` /
+   * `error`). The only way to see the MXN offramp, MXNe migration and LATAM
+   * payouts settle; poll every ~5s until `isTerminal`.
+   */
+  getWorkflowStatus(args: {userId: string; workflowId: string}): Promise<Json> {
+    return this.request(
+      'GET',
+      `/v1/users/${args.userId}/wallets/workflows/${args.workflowId}`,
     );
   }
 
@@ -1342,6 +1431,7 @@ export class ProxyApiClient {
     path: string,
     files: UploadFile[],
     fields: Record<string, string>,
+    fileField = 'files',
   ): Promise<Json> {
     const form = new FormData();
     for (const [key, value] of Object.entries(fields)) {
@@ -1350,7 +1440,7 @@ export class ProxyApiClient {
     for (const file of files) {
       // React Native's FormData takes a {uri, name, type} descriptor rather
       // than a Blob; the bridge streams the file itself.
-      form.append('files', file as unknown as Blob);
+      form.append(fileField, file as unknown as Blob);
     }
     const response = await fetch(this.url(path), {
       method: 'POST',
