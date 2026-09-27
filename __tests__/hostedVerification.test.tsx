@@ -15,7 +15,7 @@ jest.mock('react-native-webview', () => {
 });
 jest.mock('react-native-safe-area-context', () => {
   const {View} = require('react-native');
-  return {SafeAreaView: View};
+  return {SafeAreaProvider: View, SafeAreaView: View};
 });
 
 const html = '<form id="f"></form>';

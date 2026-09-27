@@ -11,7 +11,7 @@
  */
 
 import React, {useRef, useState} from 'react';
-import {Modal, ScrollView, Text, View} from 'react-native';
+import {Modal, ScrollView, Text} from 'react-native';
 
 import {
   extractSignableHash,
@@ -27,6 +27,7 @@ import {
   Button,
   Field,
   LastResponsePanel,
+  ModalScreen,
   Note,
   PinPrompt,
   Row,
@@ -160,7 +161,7 @@ export function IntegrationsScreen({
 
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
-      <View style={styles.screen}>
+      <ModalScreen>
         <ScrollView contentContainerStyle={styles.scroll}>
           <Row>
             <Button label="Close" kind="ghost" onPress={onClose} />
@@ -676,7 +677,7 @@ export function IntegrationsScreen({
           onCancel={() => setPinVisible(false)}
           onSubmit={signAndSubmit}
         />
-      </View>
+      </ModalScreen>
     </Modal>
   );
 }

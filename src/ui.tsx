@@ -14,6 +14,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
+import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 
 export const theme = {
   background: '#0C0A10',
@@ -133,6 +134,20 @@ export function Button({
         {label}
       </Text>
     </Pressable>
+  );
+}
+
+/**
+ * Full-screen body for a `Modal`. A Modal is its own native tree, so it needs
+ * its own inset provider or its content slides under the status bar.
+ */
+export function ModalScreen({children}: {children: React.ReactNode}) {
+  return (
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
+        {children}
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 

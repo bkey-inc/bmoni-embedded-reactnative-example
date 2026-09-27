@@ -13,11 +13,10 @@
 
 import React, {useCallback, useRef, useState} from 'react';
 import {Modal, View} from 'react-native';
-import {SafeAreaView} from 'react-native-safe-area-context';
 import {WebView} from 'react-native-webview';
 
 import {ProxyApiError, type Json, type ProxyApiClient} from './proxyClient';
-import {Button, Note, Row, StatusBanner, styles} from './ui';
+import {Button, ModalScreen, Note, Row, StatusBanner, styles} from './ui';
 
 function HostedVerificationModal({
   html,
@@ -33,7 +32,7 @@ function HostedVerificationModal({
       animationType="slide"
       onRequestClose={onClose}
       onShow={() => setError(null)}>
-      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
+      <ModalScreen>
         <View style={styles.webviewHeader}>
           <Row>
             <Button label="Close" kind="ghost" onPress={onClose} />
@@ -55,7 +54,7 @@ function HostedVerificationModal({
             onError={event => setError(event.nativeEvent.description)}
           />
         ) : null}
-      </SafeAreaView>
+      </ModalScreen>
     </Modal>
   );
 }
